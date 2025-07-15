@@ -5,6 +5,14 @@
 #include "driver/uart.h"
 #include "esp_err.h"
 #include <stdio.h>
+#include "esp_wifi.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+
+#define WIFI_SSID "cheongjukgwan2"
+#define WIFI_PASS "Djedsmhspw2015!"
 
 #define three_GPIO 13
 #define five_GPIO 15
@@ -17,6 +25,56 @@
 #define SERVO_MAX_PULSEWIDTH_US 2500
 #define SERVO_MAX_DEGREE 180
 #define BUF_SIZE 1024
+
+static const char *TAG = "WIFI";
+
+// 이벤트 핸들 -> 특정 이벤트가 발생할 때 자동으로 호출되는 함수
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) { 
+    // 사용자가 등록할 때 넘기는 추가 데이터, 어떤 종류의 이벤트 인지 구분, 이벤트 상태, 캐스팅 해서 IP 정보로 이용
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) { //wifi 이벤트이며 id_event가 사타 시작 상태라면 연결시도
+        esp_wifi_connect(); // 연결 시도
+    }
+    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) { // 첫 연결 실패시 다시 연결시도
+        ESP_LOGW(TAG, "와이파이 연결 재시도 중");
+        esp_wifi_connect(); // 연결 시도
+    }
+    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) { 
+        // 와이파이가 연결되어 두 변수의 상태가 변함
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data; 
+        // 구조체의 정보를 넘김
+        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        // IP 주소 정보를 담아 출력해줌, IPv4 주소를 문자열처럼 출력해줌
+    }
+}
+
+void wifi_init_sta(void) {
+    ESP_ERROR_CHECK(nvs_flash_init()); // 시스템 저장소 초기화 
+    ESP_ERROR_CHECK(esp_netif_init()); // wifi초기화
+    ESP_ERROR_CHECK(esp_event_loop_create_default()); // 이벤트 루프 설정
+    esp_netif_create_default_wifi_sta(); // (OSI) 네트워크 계층 초기화
+ 
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT(); // 구조체 정보 저장
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg)); // 구조체를 넘겨 기본 설정
+
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+    // 이벤트 핸들러 등록, (wifi관련 모든 이벤트)에서 (모든 wifi 이벤트 ID)로 (등록할 콜백 함수 주소)를 넘기며 추가 인자는 없다
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
+    // 비슷한 의미로 IP가 성공적으로 할당된 이벤트를 처리
+
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = WIFI_SSID, // ID
+            .password = WIFI_PASS, // PS
+        },
+    };
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA)); // STA 모드
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config)); // ID, PS 보내기
+    ESP_ERROR_CHECK(esp_wifi_start()); // wifi 시작
+
+    ESP_LOGI(TAG, "와이파이 초기화 끝, 연 결 중"); // 로그
+}
+
 
 //us는 마이크로초 단위의 펄스폭을 의미함
 static uint32_t servo_us_to_duty(uint32_t us) { // us는 값이 쉽게 커질 수 있기에 넉넉한 32
@@ -39,7 +97,7 @@ void rotate_servo_360(uint32_t channel, int direction) { // 채널과 방향의 
     ledc_update_duty(LEDC_LOW_SPEED_MODE, channel); // 지정 채널에 업로드
 }
 
-void app_main(void) {
+void servo_motor(void) {
 
     ledc_timer_config_t ledc_timer = { // Ledc는 PWM을 활용하는 모든 하드웨어
         .duty_resolution = LEDC_TIMER_15_BIT, // 듀티 해상도 비트 수 (얼마나 세세히 조정하는가?)
@@ -159,4 +217,10 @@ void app_main(void) {
     // 버퍼 정리
     memset(uart_buff, 0, sizeof(uart_buff)); // 메모리 초기화 (+공부)
     uart_flush_input(UART_NUM_0);  // 다음 입력에 영향 안 주도록 초기화 (버퍼 clear)
+}
+
+void app_main(void){
+    nvs_flash();
+    wifi_init_sta();
+    servo_motor();
 }
