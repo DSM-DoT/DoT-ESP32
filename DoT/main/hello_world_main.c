@@ -10,8 +10,10 @@
 #include "nvs_flash.h"
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_websocket_client.h"
+#include "cJSON.h"
 
-#define WIFI_SSID "cheongjukgwan2"
+#define WIFI_SSID "cheongjukgwan2" // 변동 가능 학교 안됨
 #define WIFI_PASS "Djedsmhspw2015!"
 
 #define three_GPIO 13
@@ -26,17 +28,19 @@
 #define SERVO_MAX_DEGREE 180
 #define BUF_SIZE 1024
 
-static const char *TAG = "WIFI";
+int binary = 0;
+
+static const char *TAG_WIFI = "WIFI";
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) { //event_base = ip 이벤트인지 wifi 이벤트인지 판별, event_id = 연결 상태, event_data = 이벤트 관련 데이터
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) { //wifi 이벤트이며 id_event가 사타 시작 상태라면 연결시도
         esp_wifi_connect(); // 연결 시도
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) { // 첫 연결 실패시 다시 연결시도
-        ESP_LOGW(TAG, "와파 연결 재시도 중");
+        ESP_LOGW(TAG_WIFI, "와파 연결 재시도 중");
         esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) { // 연결 완료 일때 연결된 와파 관련 정보도 같이 출력
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG_WIFI, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
     }
 }
 
@@ -63,9 +67,55 @@ void wifi_init_sta(void){
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "와파 초기화 끝, 연 결 중");
+    ESP_LOGI(TAG_WIFI, "와파 초기화 끝, 연 결 중");
 }
 
+static const char *TAG_WSS = "HTTP_WSS";
+
+static void websocket_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data){
+    esp_websocket_event_data_t *data = (esp_websocket_event_data_t *)event_data;
+
+    switch (event_id){
+        case WEBSOCKET_EVENT_CLOSED:
+            ESP_LOGI(TAG_WSS, "websocket 연결 되따");
+            break;
+
+        case WEBSOCKET_EVENT_DISCONNECTED:
+            ESP_LOGI(TAG_WSS, "websocket 연결 종료");
+            break;
+
+        case WEBSOCKET_EVENT_DATA:
+            ESP_LOGI(TAG_WSS, "메시지 수신 [%.*s]", data->data_len, (char *)data->data_ptr);
+
+            cJSON *root = cJSON_ParseWithLength(data->data_ptr, data->data_len);
+            if(root){
+                cJSON *val = cJSON_GetObjectItem(root, "value");
+                binary = val->valueint;
+                ESP_LOGI(TAG_WSS, "받은거: %d", binary);
+                cJSON_Delete(root);
+            }
+            else{
+                ESP_LOGI(TAG_WSS, "ㅍㅅ 실패");
+            }
+            break;
+        
+        case WEBSOCKET_EVENT_ERROR:
+            ESP_LOGI(TAG_WSS, "websocket 실패");
+            break;
+    }
+}
+
+void websocket_app_start(void)
+{
+    esp_websocket_client_config_t websocket_cfg = {
+        .uri = "wss://dot-backend-4dde.onrender.com",
+    };
+
+    esp_websocket_client_handle_t client = esp_websocket_client_init(&websocket_cfg);
+    esp_websocket_register_events(client, ESP_EVENT_ANY_ID, websocket_event_handler, (void *)client);
+
+    esp_websocket_client_start(client);
+}
 
 //us는 마이크로초 단위의 펄스폭을 의미함
 static uint32_t servo_us_to_duty(uint32_t us) { // us는 값이 쉽게 커질 수 있기에 넉넉한 32
@@ -188,7 +238,7 @@ void servo_motor(void) {
         LEDC_CHANNEL_4
     };
 
-    char *dots = "100000"; // l 
+    int *dots = &binary;
 
     while (1) {
         for (int i = 0; i < 6; i++) {
@@ -214,5 +264,6 @@ void servo_motor(void) {
 void app_main(void){
     wifi_init_sta();
     channel();
+    websocket_app_start();
     servo_motor();
 }
