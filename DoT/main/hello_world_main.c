@@ -28,7 +28,7 @@
 #define SERVO_MAX_DEGREE 180
 #define BUF_SIZE 1024
 
-int binary = 0;
+char *binary = 0;
 
 static const char *TAG_WIFI = "WIFI";
 
@@ -90,8 +90,8 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base, i
             cJSON *root = cJSON_ParseWithLength(data->data_ptr, data->data_len);
             if(root){
                 cJSON *val = cJSON_GetObjectItem(root, "value");
-                binary = val->valueint;
-                ESP_LOGI(TAG_WSS, "받은거: %d", binary);
+                *binary = val->valueint;
+                ESP_LOGI(TAG_WSS, "받은거: %s", binary);
                 cJSON_Delete(root);
             }
             else{
@@ -238,17 +238,19 @@ void servo_motor(void) {
         LEDC_CHANNEL_4
     };
 
-    int *dots = &binary;
+    char *dots = binary;
+    uint32_t i = 0;
 
-    while (1) {
-        for (int i = 0; i < 6; i++) {
+    while (dots[i] != '\0') {
+        uint32_t temp = i;
+        for (i = temp; i < temp + 6; i++) {
             if (dots[i] == '1') {
                 rotate_servo_360(channel_List[i], 1);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(250));
 
-        for (int i = 0; i < 6; i++) {
+        for (i = temp; i < temp + 6; i++) {
             if (dots[i] == '1') {
                 rotate_servo_360(channel_List[i], -1);
             }
