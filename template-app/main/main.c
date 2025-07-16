@@ -5,6 +5,16 @@
 #include "driver/uart.h"
 #include "esp_err.h"
 #include <stdio.h>
+#include "esp_wifi.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_websocket_client.h"
+#include "cJSON.h"
+
+#define WIFI_SSID "cheongjukgwan2"
+#define WIFI_PASS "Djedsmhspw2015!"
 
 #define three_GPIO 13
 #define five_GPIO 15
@@ -17,6 +27,49 @@
 #define SERVO_MAX_PULSEWIDTH_US 2500
 #define SERVO_MAX_DEGREE 180
 #define BUF_SIZE 1024
+
+int binary = 0;
+
+static const char *TAG_WIFI = "WIFI";
+static const char *TAG_WSS = "WSS";
+
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) { //event_base = ip 이벤트인지 wifi 이벤트인지 판별, event_id = 연결 상태, event_data = 이벤트 관련 데이터
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) { //wifi 이벤트이며 id_event가 사타 시작 상태라면 연결시도
+        esp_wifi_connect(); // 연결 시도
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) { // 첫 연결 실패시 다시 연결시도
+        ESP_LOGW(TAG_WIFI, "와파 연결 재시도 중");
+        esp_wifi_connect();
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) { // 연결 완료 일때 연결된 와파 관련 정보도 같이 출력
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI(TAG_WIFI, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+    }
+}
+
+void wifi_init_sta(void) {
+    ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
+
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = WIFI_SSID,
+            .password = WIFI_PASS, 
+        },
+    };
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_LOGI(TAG_WIFI, "와파 초기화 끝, 연 결 중");
+}
 
 //us는 마이크로초 단위의 펄스폭을 의미함
 static uint32_t servo_us_to_duty(uint32_t us) { // us는 값이 쉽게 커질 수 있기에 넉넉한 32
@@ -39,8 +92,7 @@ void rotate_servo_360(uint32_t channel, int direction) { // 채널과 방향의 
     ledc_update_duty(LEDC_LOW_SPEED_MODE, channel); // 지정 채널에 업로드
 }
 
-void app_main(void) {
-
+void channel(void){
     ledc_timer_config_t ledc_timer = { // Ledc는 PWM을 활용하는 모든 하드웨어
         .duty_resolution = LEDC_TIMER_15_BIT, // 듀티 해상도 비트 수 (얼마나 세세히 조정하는가?)
         .freq_hz = 50, // 주파수 설정 (1초에 몇번의 신호가 반복되는가)
@@ -115,7 +167,9 @@ void app_main(void) {
         };
 
     ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel19));
+}
 
+void servo_motor(void) {
     // UART 기본 설정
     uart_config_t uart_config = {
         .baud_rate = 115200,
@@ -159,4 +213,59 @@ void app_main(void) {
     // 버퍼 정리
     memset(uart_buff, 0, sizeof(uart_buff)); // 메모리 초기화 (+공부)
     uart_flush_input(UART_NUM_0);  // 다음 입력에 영향 안 주도록 초기화 (버퍼 clear)
+}
+
+static void websocket_event_handler(void *handler_arg, esp_event_base_t base, int32_t event_id, void* event_data) { // wss handler 생성
+    esp_websocket_event_data_t *data = (esp_websocket_event_data_t*)event_data;
+    // void 타입이기에 구조체 접근 불가 -> 형변환 필요
+    // (esp_websocket_event_data_t*)를 하는 이유는 void 그 자체를 넘길 수 없기에 명시적 형변환을 함
+
+    switch(event_id) {
+        case WEBSOCKET_EVENT_CONNECTED:
+            ESP_LOGI(TAG_WSS, "connected");
+            break; 
+        
+        case WEBSOCKET_EVENT_DATA:
+            ESP_LOGI(TAG_WSS, "Received data: %.*s", data->data_len, (char *)data->data_ptr);
+
+            cJSON *root = cJSON_ParseWithLength(data->data_ptr, data->data_len);
+            if(root){
+                cJSON *val = cJSON_GetObjectItem(root, "value");
+                binary = val->valueint;
+                ESP_LOGI(TAG_WSS, "GET: %d", binary);
+                cJSON_Delete(root);
+            }
+            else{
+                ESP_LOGI(TAG_WSS, "failed paushing");
+            }
+            break;
+
+        case WEBSOCKET_EVENT_DISCONNECTED:
+            ESP_LOGI(TAG_WSS, "disconnected");
+            break;
+    }
+} 
+
+
+void app_main(void){
+    
+    esp_websocket_client_config_t wss_cfg = {
+        .uri = "wss://dot-backend-4dde.onrender.com", // wss uri 받기
+    };
+
+    esp_websocket_client_handle_t client = esp_websocket_client_init(&wss_cfg); // client를 wss 구조로 초기화 
+
+    esp_websocket_register_events(client, WEBSOCKET_EVENT_ANY, websocket_event_handler, NULL); // 이벤트 핸들러 생성, websocket 관련 모든 이벤트 처리
+
+    esp_websocket_client_start(client); // 연결 시작
+
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+    if (esp_websocekt_client_is_connected(client)) {
+        esp_websocket_client_send_text(client,  "Hello WebSocket!", strlen("Hello WebSocket!"), portMAX_DELAY);
+    }
+
+    wifi_init_sta();
+    channel();
+    servo_motor();
 }
