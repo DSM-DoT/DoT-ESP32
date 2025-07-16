@@ -11,8 +11,8 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 
-#define WIFI_SSID "cheongjukgwan2"
-#define WIFI_PASS "Djedsmhspw2015!"
+#define WIFI_SSID "3314"
+#define WIFI_PASS "20071001"
 
 #define three_GPIO 13
 #define five_GPIO 15
@@ -32,13 +32,15 @@ static const char *TAG = "WIFI";
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) { 
     // 사용자가 등록할 때 넘기는 추가 데이터, 어떤 종류의 이벤트 인지 구분, 이벤트 상태, 캐스팅 해서 IP 정보로 이용
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) { //wifi 이벤트이며 id_event가 사타 시작 상태라면 연결시도
+        ESP_LOGE(TAG, "와이파이 연결 시도중");
         esp_wifi_connect(); // 연결 시도
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) { // 첫 연결 실패시 다시 연결시도
-        ESP_LOGW(TAG, "와이파이 연결 재시도 중");
+        ESP_LOGE(TAG, "와이파이 연결 재시도 중");
         esp_wifi_connect(); // 연결 시도
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) { 
+        ESP_LOGE(TAG, "와이파이 연결 성공");
         // 와이파이가 연결되어 두 변수의 상태가 변함
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data; 
         // 구조체의 정보를 넘김
@@ -196,7 +198,7 @@ void servo_motor(void) {
         LEDC_CHANNEL_4
     };
 
-    char *dots = "100000"; // l 
+    char *dots = "0900000"; // l 
 
     while (1) {
         for (int i = 0; i < 6; i++) {
@@ -220,7 +222,6 @@ void servo_motor(void) {
 }
 
 void app_main(void){
-    nvs_flash();
     wifi_init_sta();
     servo_motor();
 }
