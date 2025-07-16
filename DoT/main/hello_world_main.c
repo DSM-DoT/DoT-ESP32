@@ -88,8 +88,7 @@ void rotate_servo_360(uint32_t channel, int direction) { // 채널과 방향의 
     ledc_update_duty(LEDC_LOW_SPEED_MODE, channel); // 지정 채널에 업로드
 }
 
-void servo_motor(void) {
-
+void channel(void){
     ledc_timer_config_t ledc_timer = { // Ledc는 PWM을 활용하는 모든 하드웨어
         .duty_resolution = LEDC_TIMER_15_BIT, // 듀티 해상도 비트 수 (얼마나 세세히 조정하는가?)
         .freq_hz = 50, // 주파수 설정 (1초에 몇번의 신호가 반복되는가)
@@ -164,7 +163,9 @@ void servo_motor(void) {
         };
 
     ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel19));
+}
 
+void servo_motor(void) {
     // UART 기본 설정
     uart_config_t uart_config = {
         .baud_rate = 115200,
@@ -211,7 +212,7 @@ void servo_motor(void) {
 }
 
 void app_main(void){
-    nvs_flash();
     wifi_init_sta();
+    channel();
     servo_motor();
 }
