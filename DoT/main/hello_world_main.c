@@ -13,14 +13,14 @@
 #include "esp_websocket_client.h"
 #include "cJSON.h"
 
-#define WIFI_SSID "cheongjukgwan2" // 변동 가능 학교 안됨
-#define WIFI_PASS "Djedsmhspw2015!"
+#define WIFI_SSID "3314" // 변경 가능
+#define WIFI_PASS "20071001"
 
 #define three_GPIO 13
 #define five_GPIO 15
-#define six_GPIO 16 // 16번 
-#define seven_GPIO 17 // 17번 핀
-#define eight_GPIO 18 // 18번 핀
+#define six_GPIO 16
+#define seven_GPIO 17
+#define eight_GPIO 18
 #define nine_GPIO 19
 
 #define SERVO_MIN_PULSEWIDTH_US 500
@@ -28,23 +28,35 @@
 #define SERVO_MAX_DEGREE 180
 #define BUF_SIZE 1024
 
-char *binary = 0;
+char binary[128];
+bool websocket_start = false;
 
 static const char *TAG_WIFI = "WIFI";
+static const char *TAG_WSS = "WSS";
 
-static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) { //event_base = ip 이벤트인지 wifi 이벤트인지 판별, event_id = 연결 상태, event_data = 이벤트 관련 데이터
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) { //wifi 이벤트이며 id_event가 사타 시작 상태라면 연결시도
-        esp_wifi_connect(); // 연결 시도
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) { // 첫 연결 실패시 다시 연결시도
-        ESP_LOGW(TAG_WIFI, "와파 연결 재시도 중");
+void websocket_app_start(void);
+void servo_motor(void);
+void channel(void);
+void wifi_init_sta(void);
+
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) { // 연결 완료 일때 연결된 와파 관련 정보도 같이 출력
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        ESP_LOGW(TAG_WIFI, "와이파이 연결 재시도 중...");
+        esp_wifi_connect();
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG_WIFI, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+
+        if (!websocket_start) {
+            websocket_app_start();
+            websocket_start = true;
+        }
     }
 }
 
-void wifi_init_sta(void){
+void wifi_init_sta(void) {
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -59,7 +71,7 @@ void wifi_init_sta(void){
     wifi_config_t wifi_config = {
         .sta = {
             .ssid = WIFI_SSID,
-            .password = WIFI_PASS, 
+            .password = WIFI_PASS,
         },
     };
 
@@ -67,169 +79,124 @@ void wifi_init_sta(void){
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG_WIFI, "와파 초기화 끝, 연 결 중");
+    ESP_LOGI(TAG_WIFI, "Wi-Fi 초기화 완료, 연결 시도 중...");
 }
 
-static const char *TAG_WSS = "HTTP_WSS";
-
-static void websocket_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data){
+static void websocket_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
     esp_websocket_event_data_t *data = (esp_websocket_event_data_t *)event_data;
 
-    switch (event_id){
-        case WEBSOCKET_EVENT_CLOSED:
-            ESP_LOGI(TAG_WSS, "websocket 연결 되따");
+    switch (event_id) {
+        case WEBSOCKET_EVENT_CONNECTED:
+            ESP_LOGI(TAG_WSS, "WebSocket 연결 성공");
             break;
-
         case WEBSOCKET_EVENT_DISCONNECTED:
-            ESP_LOGI(TAG_WSS, "websocket 연결 종료");
+            ESP_LOGI(TAG_WSS, "WebSocket 연결 종료");
             break;
-
         case WEBSOCKET_EVENT_DATA:
             ESP_LOGI(TAG_WSS, "메시지 수신 [%.*s]", data->data_len, (char *)data->data_ptr);
 
             cJSON *root = cJSON_ParseWithLength(data->data_ptr, data->data_len);
-            if(root){
-                cJSON *val = cJSON_GetObjectItem(root, "value");
-                *binary = val->valueint;
-                ESP_LOGI(TAG_WSS, "받은거: %s", binary);
+            if (root) {
+                cJSON *val = cJSON_GetObjectItem(root, "message");
+                if (val && cJSON_IsString(val)) {
+                    strncpy(binary, val->valuestring, sizeof(binary));
+                    binary[sizeof(binary) - 1] = '\0';
+                    ESP_LOGI(TAG_WSS, "수신된 값: %s", binary);
+                    servo_motor();
+                } else {
+                    ESP_LOGW(TAG_WSS, "\"value\" 필드가 없거나 문자열이 아님");
+                }
                 cJSON_Delete(root);
-            }
-            else{
-                ESP_LOGI(TAG_WSS, "ㅍㅅ 실패");
+            } else {
+                ESP_LOGW(TAG_WSS, "JSON 파싱 실패");
             }
             break;
-        
         case WEBSOCKET_EVENT_ERROR:
-            ESP_LOGI(TAG_WSS, "websocket 실패");
+            ESP_LOGE(TAG_WSS, "WebSocket 에러 발생");
+            break;
+        default:
             break;
     }
 }
 
-void websocket_app_start(void)
-{
+void websocket_app_start(void) {
+    extern const uint8_t _binary_ca_cert_pem_start[];
+    
     esp_websocket_client_config_t websocket_cfg = {
-        .uri = "wss://dot-backend-4dde.onrender.com",
+        .uri = "wss://zooming-contentment-production.up.railway.app",
+        .disable_auto_reconnect = false,
+        .reconnect_timeout_ms = 5000,
+        .cert_pem = (const char *)_binary_ca_cert_pem_start,
+        .use_global_ca_store = false,
+        // .skip_cert_common_name_check = true,
+        .transport = WEBSOCKET_TRANSPORT_OVER_SSL,
     };
 
     esp_websocket_client_handle_t client = esp_websocket_client_init(&websocket_cfg);
     esp_websocket_register_events(client, ESP_EVENT_ANY_ID, websocket_event_handler, (void *)client);
-
     esp_websocket_client_start(client);
 }
 
-//us는 마이크로초 단위의 펄스폭을 의미함
-static uint32_t servo_us_to_duty(uint32_t us) { // us는 값이 쉽게 커질 수 있기에 넉넉한 32
-    return (us * (1 << 15)) / 20000; // 시간을 듀티 사이클 값으로 변환함
+
+static uint32_t servo_us_to_duty(uint32_t us) {
+    return (us * (1 << 15)) / 20000;
 }
 
-void rotate_servo_360(uint32_t channel, int direction) { // 채널과 방향의 인자값을 받음
+void rotate_servo_360(uint32_t channel, int direction) {
     uint32_t us;
 
-    if (direction == 0) { // 정지
-        us = 1500; 
-    } else if (direction > 0) { // 우회전
-        us = 1700; 
-    } else { // 좌회전
-        us = 1300; 
+    if (direction == 0) {
+        us = 1500; // 정지 신호 (중립)
+    } else if (direction > 0) {
+        us = 1900; // 정방향 회전
+    } else {
+        us = 1100; // 역방향 회전
     }
 
-    uint32_t duty = servo_us_to_duty(us); // 듀티 사이클 값으로 반환
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty); // 지정 채널의 듀티 사이클 설정
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, channel); // 지정 채널에 업로드
+    uint32_t duty = servo_us_to_duty(us);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, channel);
 }
 
-void channel(void){
-    ledc_timer_config_t ledc_timer = { // Ledc는 PWM을 활용하는 모든 하드웨어
-        .duty_resolution = LEDC_TIMER_15_BIT, // 듀티 해상도 비트 수 (얼마나 세세히 조정하는가?)
-        .freq_hz = 50, // 주파수 설정 (1초에 몇번의 신호가 반복되는가)
-        .speed_mode = LEDC_LOW_SPEED_MODE, // 저속 모드
-        .timer_num = LEDC_TIMER_0 // 반복 주시 생성
+void channel(void) {
+    // PWM 타이머 설정
+    ledc_timer_config_t ledc_timer = {
+        .duty_resolution = LEDC_TIMER_15_BIT,
+        .freq_hz = 50,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .timer_num = LEDC_TIMER_0,
+        .clk_cfg = LEDC_AUTO_CLK,
     };
-
     ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
-    
-    ledc_channel_config_t ledc_channel13 = {
-        .channel    = LEDC_CHANNEL_5, // 채널 번호, 각 채널은 독립적인 PWM신호를 생성함 (중복된 채널을 있을 수 없음)
-        .duty       = 0, // 초기 듀티 사이클 (0 . . . 100)
-        .gpio_num   = three_GPIO, // PWM신호를 출력할 PIN번호
-        .speed_mode = LEDC_LOW_SPEED_MODE, // 저속 모드
-        .hpoint     = 0, // 처음 신호가 시작되는 시점(offset)을 뜻함, 만약 값이 5라면 5틱 후 HIGH
-        .timer_sel  = LEDC_TIMER_0 // 한 번 꺼졌다 켜졌다를 반복할 주기를 만듦
+
+    // 6개 PWM 채널 설정
+    struct {
+        ledc_channel_t channel;
+        int gpio_num;
+    } pwm_pins[] = {
+        {LEDC_CHANNEL_5, three_GPIO},
+        {LEDC_CHANNEL_0, five_GPIO},
+        {LEDC_CHANNEL_1, six_GPIO},
+        {LEDC_CHANNEL_2, seven_GPIO},
+        {LEDC_CHANNEL_3, eight_GPIO},
+        {LEDC_CHANNEL_4, nine_GPIO},
     };
 
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel13));
-
-    ledc_channel_config_t ledc_channel15 = {
-        .channel    = LEDC_CHANNEL_0, // 채널 번호, 각 채널은 독립적인 PWM신호를 생성함 (중복된 채널을 있을 수 없음)
-        .duty       = 0, // 초기 듀티 사이클 (0 . . . 100)
-        .gpio_num   = five_GPIO, // PWM신호를 출력할 PIN번호
-        .speed_mode = LEDC_LOW_SPEED_MODE, // 저속 모드
-        .hpoint     = 0, // 처음 신호가 시작되는 시점(offset)을 뜻함, 만약 값이 5라면 5틱 후 HIGH
-        .timer_sel  = LEDC_TIMER_0 // 한 번 꺼졌다 켜졌다를 반복할 주기를 만듦
-    };
-
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel15));
-
-    ledc_channel_config_t ledc_channel16 = {
-        .channel    = LEDC_CHANNEL_1, // 채널 번호, 각 채널은 독립적인 PWM신호를 생성함 (중복된 채널을 있을 수 없음)
-        .duty       = 0, // 초기 듀티 사이클 (0 . . . 100)
-        .gpio_num   = six_GPIO, // PWM신호를 출력할 PIN번호
-        .speed_mode = LEDC_LOW_SPEED_MODE, // 저속 모드
-        .hpoint     = 0, // 처음 신호가 시작되는 시점(offset)을 뜻함, 만약 값이 5라면 5틱 후 HIGH
-        .timer_sel  = LEDC_TIMER_0 // 한 번 꺼졌다 켜졌다를 반복할 주기를 만듦
-    };
-
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel16));
-
-    ledc_channel_config_t ledc_channel17 = {
-        .channel    = LEDC_CHANNEL_2, // 채널 번호, 각 채널은 독립적인 PWM신호를 생성함
-        .duty       = 0, // 초기 듀티 사이클 (0 . . . 100)
-        .gpio_num   = seven_GPIO, // PWM신호를 출력할 PIN번호
-        .speed_mode = LEDC_LOW_SPEED_MODE, // 저속 모드
-        .hpoint     = 0, // 처음 신호가 시작되는 시점(offset)을 뜻함, 만약 값이 5라면 5틱 후 HIGH
-        .timer_sel  = LEDC_TIMER_0 // 한 번 꺼졌다 켜졌다를 반복할 주기를 만듦
-    };
-
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel17)); // 구초체 값을 넘겨 값 설정
-
-    ledc_channel_config_t ledc_channel18 = {
-        .channel    = LEDC_CHANNEL_3, // 채널 번호, 각 채널은 독립적인 PWM신호를 생성함 (중복된 채널을 있을 수 없음)
-        .duty       = 0, // 초기 듀티 사이클 (0 . . . 100)
-        .gpio_num   = eight_GPIO, // PWM신호를 출력할 PIN번호
-        .speed_mode = LEDC_LOW_SPEED_MODE, // 저속 모드
-        .hpoint     = 0, // 처음 신호가 시작되는 시점(offset)을 뜻함, 만약 값이 5라면 5틱 후 HIGH
-        .timer_sel  = LEDC_TIMER_0 // 한 번 꺼졌다 켜졌다를 반복할 주기를 만듦
-    };
-
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel18));
-
-    ledc_channel_config_t ledc_channel19 = {
-            .channel    = LEDC_CHANNEL_4, // 채널 번호, 각 채널은 독립적인 PWM신호를 생성함 (중복된 채널을 있을 수 없음)
-            .duty       = 0, // 초기 듀티 사이클 (0 . . . 100)
-            .gpio_num   = nine_GPIO, // PWM신호를 출력할 PIN번호
-            .speed_mode = LEDC_LOW_SPEED_MODE, // 저속 모드
-            .hpoint     = 0, // 처음 신호가 시작되는 시점(offset)을 뜻함, 만약 값이 5라면 5틱 후 HIGH
-            .timer_sel  = LEDC_TIMER_0 // 한 번 꺼졌다 켜졌다를 반복할 주기를 만듦
+    for (int i = 0; i < 6; i++) {
+        ledc_channel_config_t ledc_channel = {
+            .channel = pwm_pins[i].channel,
+            .duty = 0,
+            .gpio_num = pwm_pins[i].gpio_num,
+            .speed_mode = LEDC_LOW_SPEED_MODE,
+            .hpoint = 0,
+            .timer_sel = LEDC_TIMER_0,
         };
-
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel19));
+        ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+    }
 }
 
 void servo_motor(void) {
-    // UART 기본 설정
-    uart_config_t uart_config = {
-        .baud_rate = 115200,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
-    };
-
-    uart_param_config(UART_NUM_0, &uart_config); // 기본 통신 설정
-    uart_driver_install(UART_NUM_0, BUF_SIZE * 2, 0, 0, NULL, 0); // UART 드라이버 설치 / 설정
-
-    uint8_t uart_buff[BUF_SIZE + 1] = { 0 }; // 버퍼 크기 설정
-    ledc_channel_t channel_List[6] = { // 채널 리스트
+    ledc_channel_t channel_List[6] = {
         LEDC_CHANNEL_5,
         LEDC_CHANNEL_0,
         LEDC_CHANNEL_1,
@@ -239,33 +206,51 @@ void servo_motor(void) {
     };
 
     char *dots = binary;
-    uint32_t i = 0;
+    uint32_t idx = 0;
 
-    while (dots[i] != '\0') {
-        uint32_t temp = i;
-        for (i = temp; i < temp + 6; i++) {
+    // binary 문자열을 6개씩 끊어서 처리
+    while (dots[idx] != '\0') {
+        // 정방향 회전
+        for (uint32_t i = idx; i < idx + 6 && dots[i] != '\0'; i++) {
             if (dots[i] == '1') {
-                rotate_servo_360(channel_List[i], 1);
+                rotate_servo_360(channel_List[i % 6], 1);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(250));
 
-        for (i = temp; i < temp + 6; i++) {
+        // 역방향 회전
+        for (uint32_t i = idx; i < idx + 6 && dots[i] != '\0'; i++) {
             if (dots[i] == '1') {
-                rotate_servo_360(channel_List[i], -1);
+                rotate_servo_360(channel_List[i % 6], -1);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(250));
-    } 
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    // 버퍼 정리
-    memset(uart_buff, 0, sizeof(uart_buff)); // 메모리 초기화 (+공부)
-    uart_flush_input(UART_NUM_0);  // 다음 입력에 영향 안 주도록 초기화 (버퍼 clear)
+
+        // 정지
+        for (uint32_t i = idx; i < idx + 6 && dots[i] != '\0'; i++) {
+            if (dots[i] == '1') {
+                rotate_servo_360(channel_List[i % 6], 0);
+            }
+        }
+
+        idx += 6;
+        
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
 }
 
-void app_main(void){
+void app_main(void) {
+    // UART 초기화 (필요시)
+    uart_config_t uart_config = {
+        .baud_rate = 115200,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
+    };
+    uart_param_config(UART_NUM_0, &uart_config);
+    uart_driver_install(UART_NUM_0, BUF_SIZE * 2, 0, 0, NULL, 0);
+
     wifi_init_sta();
     channel();
-    websocket_app_start();
-    servo_motor();
 }

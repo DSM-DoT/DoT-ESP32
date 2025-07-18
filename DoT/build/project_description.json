@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "DoT",
-    "project_version":    "6c63785-dirty",
+    "project_version":    "0398ca8-dirty",
     "project_path":       "C:/Users/user/Repository/DoT-ESP32/DoT",
     "idf_path":           "C:/Users/user/esp/v5.4.2/esp-idf",
     "build_dir":          "C:/Users/user/Repository/DoT-ESP32/DoT/build",
@@ -1205,12 +1205,12 @@
             "dir": "C:/Users/user/Repository/DoT-ESP32/DoT/main",
             "type": "LIBRARY",
             "lib": "__idf_main",
-            "reqs": [ "esp_wifi", "esp_event", "nvs_flash", "espressif__esp_websocket_client", "json", "driver" ],
+            "reqs": [ "espressif__esp_websocket_client", "json", "esp_wifi", "esp_event", "nvs_flash", "driver" ],
             "priv_reqs": [ "espressif__esp_websocket_client" ],
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__esp_websocket_client" ],
             "file": "C:/Users/user/Repository/DoT-ESP32/DoT/build/esp-idf/main/libmain.a",
-            "sources": [ "C:/Users/user/Repository/DoT-ESP32/DoT/main/hello_world_main.c" ],
+            "sources": [ "C:/Users/user/Repository/DoT-ESP32/DoT/main/hello_world_main.c", "C:/Users/user/Repository/DoT-ESP32/DoT/build/ca_cert.pem.S" ],
             "include_dirs": [ "." ]
         },
         "mbedtls": {
@@ -2856,7 +2856,7 @@
             "prefix": "idf",
             "dir": "C:/Users/user/Repository/DoT-ESP32/DoT/main",
             "lib": "__idf_main",
-            "reqs": [ "esp_wifi", "esp_event", "nvs_flash", "espressif__esp_websocket_client", "json", "driver" ],
+            "reqs": [ "espressif__esp_websocket_client", "json", "esp_wifi", "esp_event", "nvs_flash", "driver" ],
             "priv_reqs": [ "espressif__esp_websocket_client" ],
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__esp_websocket_client" ],
